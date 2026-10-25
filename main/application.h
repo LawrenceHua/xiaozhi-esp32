@@ -157,6 +157,7 @@ private:
     bool pending_listening_start_ = false;  // Waiting for playback to drain before starting listening (auto mode)
     int clock_ticks_ = 0;
     TaskHandle_t activation_task_handle_ = nullptr;
+    TaskHandle_t notify_poll_task_handle_ = nullptr;
 
 
     // Event handlers
@@ -181,6 +182,9 @@ private:
 
     // Activation task (runs in background)
     void ActivationTask();
+    void NotifyPollTask();
+    void PollPendingNotification();
+    void AckNotification(const std::string& ack_url, const std::string& id, const char* event);
 
     // Helper methods
     void CheckAssetsVersion();

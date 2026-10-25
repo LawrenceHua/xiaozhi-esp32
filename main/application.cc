@@ -317,6 +317,19 @@ void Application::HandleNetworkConnectedEvent() {
             "activation", 4096 * 2, this, 2, &activation_task_handle_);
     }
 
+    // Proactive notifications: poll for server-initiated messages while idle.
+    // Disabled unless a poll URL is configured at build time.
+    if (CONFIG_NOTIFY_POLL_URL[0] != '\0' && notify_poll_task_handle_ == nullptr) {
+        xTaskCreate(
+            [](void* arg) {
+                Application* app = static_cast<Application*>(arg);
+                app->NotifyPollTask();
+                app->notify_poll_task_handle_ = nullptr;
+                vTaskDelete(NULL);
+            },
+            "notify_poll", 4096 * 2, this, 2, &notify_poll_task_handle_);
+    }
+
     // Update the status bar immediately to show the network state
     auto display = Board::GetInstance().GetDisplay();
     display->UpdateStatusBar(true);
@@ -1177,6 +1190,112 @@ void Application::ConfigureWakeWordForListening() {
     // Disable wake word detection in listening mode
     audio_service_.EnableWakeWordDetection(false);
 #endif
+}
+
+static constexpr int kNotifyHttpTimeoutMs = 10000;
+
+void Application::NotifyPollTask() {
+    const std::string poll_url = CONFIG_NOTIFY_POLL_URL;
+    if (poll_url.empty()) {
+        ESP_LOGI(TAG, "Notify poll: disabled (no poll URL configured)");
+        return;
+    }
+    ESP_LOGI(TAG, "Notify poll: enabled, every %d s", CONFIG_NOTIFY_POLL_INTERVAL_SEC);
+    while (true) {
+        vTaskDelay(pdMS_TO_TICKS(CONFIG_NOTIFY_POLL_INTERVAL_SEC * 1000));
+        if (GetDeviceState() != kDeviceStateIdle || notify_player_.IsBusy()) {
+            continue;
+        }
+        PollPendingNotification();
+    }
+}
+
+void Application::AckNotification(const std::string& ack_url, const std::string& id,
+                                  const char* event) {
+    if (ack_url.empty()) {
+        return;
+    }
+    auto http = Board::GetInstance().GetNetwork()->CreateHttp(0);
+    if (!http) {
+        return;
+    }
+    http->SetTimeout(kNotifyHttpTimeoutMs);
+    http->SetHeader("Content-Type", "application/json");
+    http->SetContent(std::string("{\"id\":\"") + id + "\",\"event\":\"" + event + "\"}");
+    if (auto opened = http->Open("POST", ack_url); opened) {
+        ESP_LOGI(TAG, "Notify ack sent: id=%s event=%s", id.c_str(), event);
+        http->Close();
+    } else {
+        ESP_LOGW(TAG, "Notify ack failed: %s", opened.error().ToString().c_str());
+    }
+}
+
+void Application::PollPendingNotification() {
+    auto http = Board::GetInstance().GetNetwork()->CreateHttp(0);
+    if (!http) {
+        return;
+    }
+    http->SetTimeout(kNotifyHttpTimeoutMs);
+    http->SetHeader("Device-Id", SystemInfo::GetMacAddress().c_str());
+    http->SetHeader("Client-Id", Board::GetInstance().GetUuid().c_str());
+
+    if (auto opened = http->Open("GET", std::string(CONFIG_NOTIFY_POLL_URL)); !opened) {
+        ESP_LOGW(TAG, "Notify poll: request failed: %s", opened.error().ToString().c_str());
+        return;
+    }
+    auto status = http->GetStatusCode();
+    if (status && *status == 204) {
+        http->Close();
+        ESP_LOGI(TAG, "Notify poll: nothing pending");
+        return;
+    }
+    if (!status || *status != 200) {
+        ESP_LOGW(TAG, "Notify poll: unexpected status %d", status ? *status : -1);
+        http->Close();
+        return;
+    }
+
+    std::string body = http->ReadAll();
+    http->Close();
+
+    cJSON* root = cJSON_Parse(body.c_str());
+    if (root == nullptr) {
+        ESP_LOGW(TAG, "Notify poll: invalid JSON");
+        return;
+    }
+    auto id = cJSON_GetObjectItem(root, "id");
+    auto audio_url = cJSON_GetObjectItem(root, "audio_url");
+    auto ack_url = cJSON_GetObjectItem(root, "ack_url");
+    if (!cJSON_IsString(id) || !cJSON_IsString(audio_url) || audio_url->valuestring[0] == '\0') {
+        cJSON_Delete(root);
+        ESP_LOGI(TAG, "Notify poll: nothing pending");
+        return;
+    }
+
+    std::vector<NotifySubtitle> subtitles;
+    auto subs = cJSON_GetObjectItem(root, "subtitles");
+    if (cJSON_IsArray(subs)) {
+        cJSON* item = nullptr;
+        cJSON_ArrayForEach(item, subs) {
+            auto start_ms = cJSON_GetObjectItem(item, "start_ms");
+            auto text = cJSON_GetObjectItem(item, "text");
+            if (cJSON_IsNumber(start_ms) && cJSON_IsString(text)) {
+                subtitles.push_back({.start_ms = static_cast<uint32_t>(start_ms->valuedouble),
+                                     .text = text->valuestring});
+            }
+        }
+    }
+
+    std::string notify_id = id->valuestring;
+    std::string url = audio_url->valuestring;
+    std::string ack = cJSON_IsString(ack_url) ? ack_url->valuestring : "";
+    cJSON_Delete(root);
+
+    ESP_LOGI(TAG, "Notify poll: received id=%s audio_url=%s", notify_id.c_str(), url.c_str());
+    Schedule([this, url, subtitles = std::move(subtitles), notify_id, ack]() mutable {
+        StartNotification(url, std::move(subtitles));
+        AckNotification(ack, notify_id, "delivered");
+    });
 }
 
 void Application::StartNotification(std::string audio_url, std::vector<NotifySubtitle> subtitles) {

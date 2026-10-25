@@ -6,6 +6,20 @@ config OTA_URL
     help
         The application will access this URL to check for new firmwares and server address.
 
+config NOTIFY_POLL_URL
+    string "Proactive notification poll URL"
+    default ""
+    help
+        When non-empty, the device polls this URL while idle for server-initiated
+        notifications and speaks them without a wake word. Leave empty to disable
+        the whole feature (default).
+
+config NOTIFY_POLL_INTERVAL_SEC
+    depends on NOTIFY_POLL_URL != ""
+    int "Proactive notification poll interval (seconds)"
+    default 30
+    range 5 3600
+
 choice
     prompt "Flash Assets"
     default FLASH_DEFAULT_ASSETS if !USE_EMOTE_MESSAGE_STYLE
