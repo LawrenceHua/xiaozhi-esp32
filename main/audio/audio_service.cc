@@ -85,6 +85,11 @@ void AudioService::Initialize(AudioCodec* codec) {
     audio_engine_ = std::make_unique<LiteAudioEngine>();
 #endif
     audio_engine_->OnOutput([this](std::vector<int16_t>&& data) {
+        if (pre_roll_active_.load()) {
+            // The channel is not open yet: hold the audio instead of dropping it.
+            pre_roll_cache_.Store(data.data(), data.size());
+            return;
+        }
         PushTaskToEncodeQueue(kAudioTaskTypeEncodeToSendQueue, std::move(data));
     });
     audio_engine_->OnVadStateChange([this](bool speaking) {
@@ -469,15 +474,19 @@ void AudioService::OpusCodecTask() {
             audio_queue_cv_.notify_all();
             lock.unlock();
 
-            auto packet = std::make_unique<AudioStreamPacket>();
-            packet->frame_duration = OPUS_FRAME_DURATION_MS;
-            packet->sample_rate = 16000;
-            packet->timestamp = task.timestamp;
-
-            if (opus_encoder_ != nullptr && task.pcm.size() == encoder_frame_size_) {
+            // A task carries one frame for live microphone audio, or a whole batch
+            // for the wake-word pre-roll. Encode every complete frame it holds.
+            if (opus_encoder_ != nullptr &&
+                task.pcm.size() >= static_cast<size_t>(encoder_frame_size_)) {
+                for (size_t offset = 0; offset + encoder_frame_size_ <= task.pcm.size();
+                     offset += encoder_frame_size_) {
+                auto packet = std::make_unique<AudioStreamPacket>();
+                packet->frame_duration = OPUS_FRAME_DURATION_MS;
+                packet->sample_rate = 16000;
+                packet->timestamp = task.timestamp;
                 packet->payload.resize(encoder_outbuf_size_);
                 esp_audio_enc_in_frame_t in = {
-                    .buffer = (uint8_t*)(task.pcm.data()),
+                    .buffer = (uint8_t*)(task.pcm.data() + offset),
                     .len = (uint32_t)(encoder_frame_size_ * sizeof(int16_t)),
                 };
                 esp_audio_enc_out_frame_t out = {
@@ -489,7 +498,8 @@ void AudioService::OpusCodecTask() {
                 if (ret == ESP_AUDIO_ERR_OK) {
                     packet->payload.resize(out.encoded_bytes);
 
-                    if (task.type == kAudioTaskTypeEncodeToSendQueue) {
+                    if (task.type == kAudioTaskTypeEncodeToSendQueue ||
+                        task.type == kAudioTaskTypeEncodePreRollToSendQueue) {
                         {
                             std::lock_guard<std::mutex> lock2(audio_queue_mutex_);
                             /* Never let a full send queue stall encoding: stale realtime
@@ -515,12 +525,14 @@ void AudioService::OpusCodecTask() {
                     debug_statistics_.encode_count++;
                 } else {
                     ESP_LOGE(TAG, "Failed to encode audio, error code: %d", ret);
+                    break;
+                }
                 }
             } else {
                 ESP_LOGE(TAG,
                          "Failed to encode audio: encoder not configured or invalid frame size "
                          "(got %u, expected %u)",
-                         task.pcm.size(), encoder_frame_size_);
+                         (unsigned)task.pcm.size(), (unsigned)encoder_frame_size_);
             }
             lock.lock();
         }
@@ -578,6 +590,8 @@ void AudioService::PushTaskToEncodeQueue(AudioTaskType type, std::vector<int16_t
 
         /* If the task is to send queue, we need to set the timestamp */
         if (type == kAudioTaskTypeEncodeToSendQueue && !timestamp_queue_.empty()) {
+            // Pre-roll audio was captured before the channel existed, so it has no
+            // place in the server's AEC timeline; only live audio consumes a slot.
             task.timestamp = timestamp_queue_.front();
             timestamp_queue_.pop_front();
         }
@@ -733,6 +747,66 @@ void AudioService::EnableVoiceProcessing(bool enable) {
         }
         xEventGroupClearBits(event_group_, AS_EVENT_AUDIO_PROCESSOR_RUNNING);
     }
+}
+
+void AudioService::StartPreRoll() {
+    if (!pre_roll_cache_.Initialize(kPreRollMaxSamples)) {
+        ESP_LOGW(TAG, "pre-roll: no PSRAM buffer, post-wake speech may be clipped");
+        return;
+    }
+    pre_roll_cache_.Clear();
+    pre_roll_start_us_ = esp_timer_get_time();
+    pre_roll_active_.store(true);
+
+    // On detection the engine clears AS_EVENT_WAKE_WORD_RUNNING, which stops the
+    // capture pipeline outright. Re-arm processing here so the words spoken while
+    // the channel opens are captured rather than never sampled at all.
+    if (!IsAudioProcessorRunning()) {
+        EnableVoiceProcessing(true);
+    }
+    ESP_LOGI(TAG, "pre-roll: capturing (max %u samples)",
+             (unsigned)kPreRollMaxSamples);
+}
+
+size_t AudioService::FlushPreRoll() {
+    if (!pre_roll_active_.exchange(false)) {
+        return 0;
+    }
+    const int64_t elapsed_us = esp_timer_get_time() - pre_roll_start_us_;
+    const size_t samples = pre_roll_cache_.Size();
+    if (samples == 0) {
+        ESP_LOGI(TAG, "pre-roll: nothing captured");
+        return 0;
+    }
+    if (elapsed_us > kPreRollStaleUs) {
+        pre_roll_cache_.Clear();
+        ESP_LOGW(TAG, "pre-roll: discarded %u samples captured %.1f s before the channel opened",
+                 (unsigned)samples, elapsed_us / 1000000.0);
+        return 0;
+    }
+
+    std::vector<int16_t> pcm(samples);
+    const size_t read = pre_roll_cache_.Read(0, pcm.data(), samples);
+    pre_roll_cache_.Clear();
+    if (read == 0) {
+        return 0;
+    }
+    pcm.resize(read);
+
+    const size_t bytes = read * sizeof(int16_t);
+    const size_t ms = read * 1000 / 16000;
+    ESP_LOGI(TAG, "pre-roll: %u bytes (%u ms) queued ahead of live audio",
+             (unsigned)bytes, (unsigned)ms);
+    PushTaskToEncodeQueue(kAudioTaskTypeEncodePreRollToSendQueue, std::move(pcm));
+    return bytes;
+}
+
+void AudioService::CancelPreRoll() {
+    if (pre_roll_active_.exchange(false)) {
+        ESP_LOGI(TAG, "pre-roll: cancelled (%u samples dropped)",
+                 (unsigned)pre_roll_cache_.Size());
+    }
+    pre_roll_cache_.Clear();
 }
 
 void AudioService::EnableAudioTesting(bool enable) {

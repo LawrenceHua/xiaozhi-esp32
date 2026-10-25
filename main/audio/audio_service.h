@@ -23,6 +23,7 @@
 #include "audio_engine.h"
 #include "fixed_queue.h"
 #include "ogg_demuxer.h"
+#include "wake_words/wake_word_audio_cache.h"
 #include "protocol.h"
 
 /*
@@ -93,6 +94,10 @@ enum AudioTaskType {
     kAudioTaskTypeEncodeToSendQueue,
     kAudioTaskTypeEncodeToTestingQueue,
     kAudioTaskTypeDecodeToPlaybackQueue,
+    // A batch of already-captured PCM (the wake-word pre-roll). Encoded frame by
+    // frame inside a single dequeue: the encode queue depth is 2, so sending one
+    // task per 60 ms frame would drop all but the last two frames.
+    kAudioTaskTypeEncodePreRollToSendQueue,
 };
 
 struct AudioTask {
@@ -137,6 +142,15 @@ public:
     void EnableWakeWordDetection(bool enable);
     void ReleaseWakeWordResources();
     void EnableVoiceProcessing(bool enable);
+    // Pre-roll: audio captured between wake-word detection and the moment the
+    // server channel is actually open. The wake detector stops the capture
+    // pipeline when it fires, so without this the words spoken straight after
+    // "Hey Atlas" are never captured at all, not merely dropped.
+    void StartPreRoll();
+    // Sends what was captured, ahead of live microphone audio. Returns bytes sent
+    // (0 when nothing was captured, or when the buffer was too stale to trust).
+    size_t FlushPreRoll();
+    void CancelPreRoll();
     void EnableAudioTesting(bool enable);
     void EnableDeviceAec(bool enable);
 
@@ -191,6 +205,15 @@ private:
         audio_testing_queue_;
     FixedQueue<AudioTask, MAX_ENCODE_TASKS_IN_QUEUE> audio_encode_queue_;
     FixedQueue<AudioTask, MAX_PLAYBACK_TASKS_IN_QUEUE> audio_playback_queue_;
+    // 2.0 s of 16 kHz mono PCM = 64,000 bytes, allocated from PSRAM on first use.
+    static constexpr size_t kPreRollMaxSamples = 32000;
+    // A buffer older than this describes a moment that has already passed; send
+    // it and ASR would attribute stale speech to the current turn.
+    static constexpr int64_t kPreRollStaleUs = 2000000;
+    WakeWordAudioCache pre_roll_cache_;
+    std::atomic<bool> pre_roll_active_{false};
+    int64_t pre_roll_start_us_ = 0;
+
     bool decode_in_flight_ = false;
     bool output_in_flight_ = false;
     bool playback_drained_notified_ = true;
