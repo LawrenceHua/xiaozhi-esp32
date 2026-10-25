@@ -1,0 +1,27 @@
+# Wake words for the AIPI Lite (xorigin/aipi-lite).
+#
+# Each non-comment line is one wake word:
+#
+#     <phrase>|<display text>
+#
+# <phrase>       what the recogniser must hear. Lowercase graphemes: the English
+#                MultiNet model converts them to phonemes with an on-device G2P.
+# <display text> what the device shows on screen and sends to the server.
+#
+# Adding, renaming or removing a wake word is a change to THIS FILE plus a
+# rebuild (or an assets-partition update on a device with an OTA assets path);
+# no C++ and no model training is involved.
+#
+# The stock ESP-SR WakeNet model (wn9_hiesp, "Hi ESP") stays packaged alongside
+# these words as the fallback: if the MultiNet detector fails to initialise the
+# device still wakes on "Hi ESP" instead of becoming unresponsive.
+#
+# Optional settings, as comment lines:
+#     # threshold: 0.2     detection threshold, 0.0-1.0 (lower = more sensitive)
+#     # duration: 3000     recognition window in milliseconds
+
+# threshold: 0.2
+# duration: 3000
+
+HEY ATLAS|Hey Atlas
+HEY POTATO|Hey Potato
