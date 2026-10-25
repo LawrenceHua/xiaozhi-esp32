@@ -268,5 +268,89 @@ class ConfiguredAssetsTest(unittest.TestCase):
             self.assertFalse((root / "unused.bin").exists())
 
 
+    def test_parse_wakeword_file_reads_commands_and_settings(self):
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "wakewords.txt"
+            path.write_text(
+                "# threshold: 0.3\n# duration: 2500\n"
+                "hey atlas|Hey Atlas\n"
+                "hey potato\n",
+                encoding="utf-8",
+            )
+            commands, threshold, duration = BUILD.parse_wakeword_file(str(path))
+            self.assertEqual(
+                commands,
+                [
+                    {"command": "hey atlas", "text": "Hey Atlas", "action": "wake"},
+                    {"command": "hey potato", "text": "hey potato", "action": "wake"},
+                ],
+            )
+            self.assertEqual(threshold, 0.3)
+            self.assertEqual(duration, 2500)
+
+    def test_parse_wakeword_file_rejects_empty_and_invalid_settings(self):
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "wakewords.txt"
+            path.write_text("# only comments\n", encoding="utf-8")
+            with self.assertRaises(ValueError):
+                BUILD.parse_wakeword_file(str(path))
+            path.write_text("# threshold: 1.5\nhey atlas\n", encoding="utf-8")
+            with self.assertRaises(ValueError):
+                BUILD.parse_wakeword_file(str(path))
+
+    def test_cli_packages_board_wakewords_next_to_stock_wakenet(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            self.base_pack(root)
+            (root / "sdkconfig").write_text(
+                'CONFIG_IDF_TARGET="esp32s3"\n'
+                "CONFIG_USE_AFE_WAKE_WORD=y\n"
+                "CONFIG_SR_WN_WN9_HIESP=y\n"
+                "CONFIG_SR_MN_EN_MULTINET7_QUANT=y\n",
+                encoding="utf-8",
+            )
+            for relative, payload in (
+                ("wakenet_model/wn9_hiesp/_MODEL_INFO_", b"wn info"),
+                ("wakenet_model/wn9_hiesp/weights", b"stock wakenet weights"),
+                ("multinet_model/mn7_en/_MODEL_INFO_", b"mn info"),
+                ("multinet_model/mn7_en/mn7_data", b"english multinet weights"),
+                ("multinet_model/fst/commands_en.txt", b"# default commands"),
+            ):
+                target = root / "models" / relative
+                target.parent.mkdir(parents=True, exist_ok=True)
+                target.write_bytes(payload)
+            wakewords = root / "wakewords.txt"
+            wakewords.write_text(
+                "# threshold: 0.3\n"
+                "hey atlas|Hey Atlas\n"
+                "hey potato|Hey Potato\n",
+                encoding="utf-8",
+            )
+            result = subprocess.run(
+                [sys.executable, str(ROOT / "scripts/build_default_assets.py"),
+                 "--sdkconfig", str(root / "sdkconfig"),
+                 "--base_assets", str(root / "base.bin"),
+                 "--output", str(root / "configured.bin"),
+                 "--esp_sr_model_path", str(root / "models"),
+                 "--wakeword_file", str(wakewords)],
+                text=True, capture_output=True,
+            )
+            self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+            files = BUILD.read_assets_entries(root / "configured.bin", 32)
+            index = json.loads(files["index.json"][0])
+            info = index["multinet_model"]
+            self.assertEqual(info["language"], "en")
+            self.assertEqual(info["threshold"], 0.3)
+            self.assertEqual(info["duration"], 3000)
+            self.assertEqual(
+                [(item["command"], item["text"], item["action"]) for item in info["commands"]],
+                [("hey atlas", "Hey Atlas", "wake"), ("hey potato", "Hey Potato", "wake")],
+            )
+            # Both the stock WakeNet fallback and the MultiNet model are packaged.
+            models = files[index["srmodels"]][0]
+            self.assertIn(b"stock wakenet weights", models)
+            self.assertIn(b"english multinet weights", models)
+
+
 if __name__ == "__main__":
     unittest.main()

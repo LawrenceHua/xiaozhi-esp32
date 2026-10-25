@@ -711,6 +711,46 @@ def read_wake_word_type_from_sdkconfig(sdkconfig_path):
     return config_values
 
 
+def parse_wakeword_file(path):
+    """Read a board wake-word list.
+
+    Each non-comment line is ``phrase`` or ``phrase|display``. Comment lines may
+    carry ``# threshold: 0.2`` and ``# duration: 3000`` settings.
+
+    Returns ``(commands, threshold, duration)``; ``threshold``/``duration`` are
+    None when the file does not set them.
+    """
+    commands = []
+    threshold = None
+    duration = None
+    with io.open(path, "r", encoding="utf-8") as handle:
+        for raw in handle:
+            line = raw.strip()
+            if not line:
+                continue
+            if line.startswith("#"):
+                key, _, value = line.lstrip("#").strip().partition(":")
+                key = key.strip().lower()
+                value = value.strip()
+                if key == "threshold" and value:
+                    threshold = float(value)
+                elif key == "duration" and value:
+                    duration = int(value)
+                continue
+            phrase, _, display = line.partition("|")
+            phrase = phrase.strip()
+            display = display.strip() or phrase
+            if phrase:
+                commands.append({"command": phrase, "text": display, "action": "wake"})
+    if not commands:
+        raise ValueError(f"{path}: wake-word list contains no wake words")
+    if threshold is not None and not 0.0 < threshold <= 1.0:
+        raise ValueError(f"{path}: threshold must be greater than 0 and at most 1")
+    if duration is not None and duration <= 0:
+        raise ValueError(f"{path}: duration must be a positive number of milliseconds")
+    return commands, threshold, duration
+
+
 def read_custom_wake_word_from_sdkconfig(sdkconfig_path):
     """
     Read custom wake word configuration from sdkconfig
@@ -970,6 +1010,9 @@ def main():
     parser.add_argument('--noto_fonts_path', help='Path to noto-fonts component directory')
     parser.add_argument('--extra_files', help='Path to extra files directory to be included in assets')
     parser.add_argument('--base_assets', help='Replace speech models in an existing custom/Emote assets file')
+    parser.add_argument('--wakeword_file',
+                        help='Board wake-word list (phrase|display per line); packages the '
+                             'selected MultiNet model and its commands into index.json')
     parser.add_argument('--name_length', type=int, default=32, help='Base assets filename field length')
     parser.add_argument('--max_size', type=lambda v: int(v, 0), default=None,
                         help='Fail if assets.bin exceeds this many bytes (decimal or 0x hex)')
@@ -1017,14 +1060,24 @@ def main():
     elif wakenet_model_names:
         print(f"  Note: Found wakenet models {wakenet_model_names} but wake word type is not ESP/AFE, skipping")
     
-    # 2. Error check: if USE_CUSTOM_WAKE_WORD=y but no multinet models selected, report error
-    if wake_word_config['use_custom_wake_word'] and not multinet_model_names:
-        print("Error: USE_CUSTOM_WAKE_WORD is enabled but no multinet models are selected in sdkconfig")
-        print("Please select appropriate CONFIG_SR_MN_* options in menuconfig, or disable USE_CUSTOM_WAKE_WORD")
+    # 2. Error check: a custom wake word needs a MultiNet model to run it
+    wakeword_commands = None
+    wakeword_threshold = None
+    wakeword_duration = None
+    if args.wakeword_file:
+        wakeword_commands, wakeword_threshold, wakeword_duration = parse_wakeword_file(
+            args.wakeword_file
+        )
+    custom_wake_word_requested = (
+        wake_word_config['use_custom_wake_word'] or wakeword_commands is not None
+    )
+    if custom_wake_word_requested and not multinet_model_names:
+        print("Error: a custom wake word is configured but no multinet models are selected in sdkconfig")
+        print("Please select appropriate CONFIG_SR_MN_* options in menuconfig, or remove the custom wake word")
         sys.exit(1)
-    
-    # 3. Only package multinet models if USE_CUSTOM_WAKE_WORD=y
-    if wake_word_config['use_custom_wake_word']:
+
+    # 3. Only package multinet models when a custom wake word will use them
+    if custom_wake_word_requested:
         multinet_model_paths = get_multinet_model_paths(multinet_model_names, args.esp_sr_model_path)
     elif multinet_model_names:
         print(f"  Note: Found multinet models {multinet_model_names} but USE_CUSTOM_WAKE_WORD is disabled, skipping")
@@ -1058,26 +1111,36 @@ def main():
     custom_wake_word_config = read_custom_wake_word_from_sdkconfig(args.sdkconfig)
     multinet_model_info = None
     
-    if custom_wake_word_config and multinet_model_paths:
+    # A board wake-word file wins over the single menuconfig word: it can list
+    # several wake words and it is the file a board owner edits to rename one.
+    if multinet_model_paths and (wakeword_commands is not None or custom_wake_word_config):
         # Determine language from multinet models
         language = get_language_from_multinet_models(multinet_model_names)
-        
+
+        if wakeword_commands is not None:
+            commands = wakeword_commands
+            threshold = wakeword_threshold if wakeword_threshold is not None else 0.2
+            duration = wakeword_duration if wakeword_duration is not None else 3000
+        else:
+            commands = [{
+                "command": custom_wake_word_config['wake_word'],
+                "text": custom_wake_word_config['display'],
+                "action": "wake",
+            }]
+            threshold = custom_wake_word_config['threshold']
+            duration = 3000
+
         # Build multinet_model info structure
         multinet_model_info = {
             "language": language,
-            "duration": 3000,  # Default duration in ms
-            "threshold": custom_wake_word_config['threshold'],
-            "commands": [
-                {
-                    "command": custom_wake_word_config['wake_word'],
-                    "text": custom_wake_word_config['display'],
-                    "action": "wake"
-                }
-            ]
+            "duration": duration,
+            "threshold": threshold,
+            "commands": commands,
         }
-        print(f"  custom wake word: {custom_wake_word_config['wake_word']} ({custom_wake_word_config['display']})")
+        for command in commands:
+            print(f"  wake word: {command['command']} ({command['text']})")
         print(f"  wake word language: {language}")
-        print(f"  wake word threshold: {custom_wake_word_config['threshold']}")
+        print(f"  wake word threshold: {threshold}")
 
     if args.base_assets:
         try:

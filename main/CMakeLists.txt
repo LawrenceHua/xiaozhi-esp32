@@ -1385,6 +1385,14 @@ function(build_default_assets_bin)
     list(APPEND BUILD_ARGS "--esp_sr_model_path" "${ESP_SR_MODEL_PATH}")
     list(APPEND BUILD_ARGS "--noto_fonts_path" "${NOTO_FONTS_PATH}")
 
+    # A board that carries its own wake-word list gets it packaged into index.json.
+    # The list is text: renaming a wake word is an edit here, not a new model.
+    set(BOARD_WAKEWORD_FILE "${CMAKE_CURRENT_SOURCE_DIR}/boards/${BOARD_DIR}/wakewords.txt")
+    if(EXISTS "${BOARD_WAKEWORD_FILE}")
+        list(APPEND BUILD_ARGS "--wakeword_file" "${BOARD_WAKEWORD_FILE}")
+        list(APPEND DEFAULT_ASSETS_DEPENDENCIES "${BOARD_WAKEWORD_FILE}")
+    endif()
+
     # Enforce assets.bin fits the flash partition (e.g. ESP-HI 4MB map uses 1MB assets).
     partition_table_get_partition_info(assets_partition_size "--partition-name assets" "size")
     if(assets_partition_size)

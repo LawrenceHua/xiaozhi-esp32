@@ -104,6 +104,13 @@ bool CustomWakeWord::Initialize(AudioCodec* codec, srmodel_list_t* models_list) 
         return false;
     }
 
+    // Without wake words there is nothing to detect. Fail here so the engine can
+    // fall back to the stock WakeNet word instead of running a silent detector.
+    if (commands_.empty()) {
+        ESP_LOGE(TAG, "No wake words configured, refusing to start the MultiNet detector");
+        return false;
+    }
+
     // 初始化 multinet (命令词识别)
     mn_name_ = esp_srmodel_filter(models_, ESP_MN_PREFIX, language_.c_str());
     if (mn_name_ == nullptr) {
@@ -120,12 +127,30 @@ bool CustomWakeWord::Initialize(AudioCodec* codec, srmodel_list_t* models_list) 
     multinet_model_data_ = multinet_->create(mn_name_, duration_);
     multinet_->set_det_threshold(multinet_model_data_, threshold_);
     input_buffer_.reserve(multinet_->get_samp_chunksize(multinet_model_data_));
+    ESP_LOGI(TAG, "MultiNet model '%s', language '%s', threshold %.2f, window %d ms, %d wake word(s)",
+             mn_name_, language_.c_str(), threshold_, duration_, static_cast<int>(commands_.size()));
     esp_mn_commands_clear();
     for (int i = 0; i < commands_.size(); i++) {
-        esp_mn_commands_add(i + 1, commands_[i].command.c_str());
+        esp_err_t added = esp_mn_commands_add(i + 1, commands_[i].command.c_str());
+        if (added != ESP_OK) {
+            ESP_LOGE(TAG, "MultiNet rejected wake word %d '%s' (error %d)", i + 1,
+                     commands_[i].command.c_str(), static_cast<int>(added));
+        }
     }
-    esp_mn_commands_update();
-    
+    // Anything the model cannot parse from the configured graphemes comes back
+    // here; such a word would never fire, so it has to be reported, not swallowed.
+    esp_mn_error_t* command_errors = esp_mn_commands_update();
+    if (command_errors != nullptr && command_errors->num > 0) {
+        for (int i = 0; i < command_errors->num; ++i) {
+            const char* rejected = (command_errors->phrases[i] != nullptr &&
+                                    command_errors->phrases[i]->string != nullptr)
+                                       ? command_errors->phrases[i]->string
+                                       : "(null)";
+            ESP_LOGE(TAG, "MultiNet cannot parse wake word: %s", rejected);
+        }
+        ESP_LOGE(TAG, "%d wake word(s) will never fire", command_errors->num);
+    }
+
     multinet_->print_active_speech_commands(multinet_model_data_);
 #if CONFIG_SEND_WAKE_WORD_DATA
     if (!wake_word_audio_cache_.Initialize(16000 * 2)) {
