@@ -1,5 +1,8 @@
 #include "aipi_lite_display.h"
 #include <esp_log.h>
+#include "display/lvgl_display/lvgl_theme.h"
+#include <material_symbols.h>
+#include <noto_emoji.h>
 
 // Palette from AIPi interface study 01.
 #define STUDY_BG    lv_color_hex(0x071419)
@@ -21,12 +24,17 @@ AipiLiteDisplay::~AipiLiteDisplay() = default;
 void AipiLiteDisplay::SetupUI() {
     SpiLcdDisplay::SetupUI();            // stock layout first: every widget keeps its place
 
+    auto& mgr = LvglThemeManager::GetInstance();
+    if (auto dark = mgr.GetTheme("dark")) {
+        SetTheme(dark);
+        ESP_LOGI(TAG, "dark theme applied");
+    }
     DisplayLockGuard lock(this);
     lv_obj_t* screen = lv_screen_active();
-    if (screen == nullptr) {
-        return;
+    if (screen != nullptr) {
+        lv_obj_set_style_bg_color(screen, STUDY_BG, 0);
+        lv_obj_set_style_bg_opa(screen, LV_OPA_COVER, 0);
+        lv_obj_invalidate(screen);
     }
-    lv_obj_set_style_bg_color(screen, STUDY_BG, 0);
-    lv_obj_set_style_bg_opa(screen, LV_OPA_COVER, 0);
     ESP_LOGI(TAG, "study colours applied to the stock layout");
 }
