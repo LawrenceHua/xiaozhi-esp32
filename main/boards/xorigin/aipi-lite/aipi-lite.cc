@@ -21,7 +21,10 @@
 // transition is silent on this board. The pre-roll exists only where the AFE
 // engine does (S3/P4/S31); elsewhere AudioService's pre-roll methods are no-ops
 // and the build is unchanged, so a board without a wake-word path can never fail
-// to wake because a 64 KB buffer was unavailable.
+// to wake because a 64 KB buffer was unavailable. The ring is 3.5 s, sized from
+// the 3050 ms channel-open latency measured on this board, and the stale cutoff
+// cannot exceed it (static_assert) - a longer cutoff would accept a buffer that
+// starts mid-word and report success with a truncated transcript.
 #include <driver/gpio.h>
 #include <driver/i2c_master.h>
 #include <driver/rtc_io.h>

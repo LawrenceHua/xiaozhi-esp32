@@ -213,12 +213,21 @@ private:
         audio_testing_queue_;
     FixedQueue<AudioTask, MAX_ENCODE_TASKS_IN_QUEUE> audio_encode_queue_;
     FixedQueue<AudioTask, MAX_PLAYBACK_TASKS_IN_QUEUE> audio_playback_queue_;
-    // 2.0 s of 16 kHz mono PCM = 64,000 bytes, allocated from PSRAM on first use.
+    // 3.5 s of 16 kHz mono PCM = 112,000 bytes, allocated from PSRAM on first use.
+    // Sized from the only channel-open latency measured on this board (3050 ms,
+    // cold wake in boot-kw.log) plus 450 ms of margin, because a ring shorter
+    // than the latency silently truncates the start of the utterance.
 #ifdef AUDIO_SERVICE_HAS_PRE_ROLL
-    static constexpr size_t kPreRollMaxSamples = 32000;
+    static constexpr int kPreRollSampleRate = 16000;
+    static constexpr size_t kPreRollMaxSamples = 56000;
     // A buffer older than this describes a moment that has already passed; send
-    // it and ASR would attribute stale speech to the current turn.
-    static constexpr int64_t kPreRollStaleUs = 2000000;
+    // it and ASR would attribute stale speech to the current turn. It must never
+    // outlive the ring: a longer cutoff accepts a buffer that begins mid-word,
+    // and that looks exactly like success in every log but the transcript.
+    static constexpr int64_t kPreRollStaleUs = 3500000;
+    static_assert(kPreRollMaxSamples * 1000 / kPreRollSampleRate >= kPreRollStaleUs / 1000,
+                  "pre-roll cutoff exceeds the pre-roll buffer: the flush would "
+                  "accept a buffer starting mid-utterance");
     WakeWordAudioCache pre_roll_cache_;
     std::atomic<bool> pre_roll_active_{false};
     int64_t pre_roll_start_us_ = 0;

@@ -965,7 +965,12 @@ file(GLOB BOARD_SOURCES
 )
 list(APPEND SOURCES ${BOARD_SOURCES})
 
-# Select one audio engine for each chip family
+# Select one audio engine for each chip family.
+# Anything this block selects is NOT part of the build on the other families, so
+# a shared source file that references it must guard the reference the same way
+# (see AUDIO_SERVICE_HAS_PRE_ROLL in audio/audio_service.h). Reference it
+# unconditionally and every other family fails at link time with an undefined
+# symbol - while the board you build stays green.
 if(CONFIG_IDF_TARGET_ESP32S3 OR CONFIG_IDF_TARGET_ESP32P4 OR CONFIG_IDF_TARGET_ESP32S31)
     list(APPEND SOURCES "audio/engines/afe_audio_engine.cc")
     list(APPEND SOURCES "audio/wake_words/custom_wake_word.cc")

@@ -5,6 +5,7 @@
 #include "system_info.h"
 
 #include <esp_log.h>
+#include <esp_timer.h>
 #include <arpa/inet.h>
 #include <cJSON.h>
 #include <cstring>
@@ -177,12 +178,18 @@ bool WebsocketProtocol::OpenAudioChannel() {
     });
 
     ESP_LOGI(TAG, "Connecting to websocket server: %s with version: %d", url.c_str(), version_);
+    // Attribution for the wake->listening latency: a warm reconnect that takes
+    // seconds is the suspect, and a total with no segments names no culprit.
+    const int64_t connect_start_us = esp_timer_get_time();
     if (auto connected = websocket_->Connect(url.c_str()); !connected) {
         ESP_LOGE(TAG, "Failed to connect to websocket server: %s",
                  connected.error().ToString().c_str());
         SetError(Lang::Strings::SERVER_NOT_CONNECTED, url);
         return false;
     }
+
+    const int64_t transport_us = esp_timer_get_time() - connect_start_us;
+    ESP_LOGI(TAG, "open: transport up in %lld ms", (long long)(transport_us / 1000));
 
     // Send hello message to describe the client
     auto message = GetHelloMessage();
@@ -194,6 +201,9 @@ bool WebsocketProtocol::OpenAudioChannel() {
     EventBits_t bits =
         xEventGroupWaitBits(event_group_handle_, WEBSOCKET_PROTOCOL_SERVER_HELLO_EVENT, pdTRUE,
                             pdFALSE, pdMS_TO_TICKS(10000));
+    const int64_t hello_us = esp_timer_get_time() - connect_start_us;
+    ESP_LOGI(TAG, "open: hello in %lld ms after transport, %lld ms total",
+             (long long)((hello_us - transport_us) / 1000), (long long)(hello_us / 1000));
     if (!(bits & WEBSOCKET_PROTOCOL_SERVER_HELLO_EVENT)) {
         ESP_LOGE(TAG, "Failed to receive server hello");
         SetError(Lang::Strings::SERVER_TIMEOUT);
