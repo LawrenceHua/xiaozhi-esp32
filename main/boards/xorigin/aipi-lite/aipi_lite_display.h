@@ -3,8 +3,9 @@
 
 #include "display/lcd_display.h"
 
-// The status screen from the interface study: dark sea-glass, one status word, one button hint.
-//   paper #f2f0e9  ink #252d31  accent #175e60  lcd #071419  screen ink #d8f3ed
+// Keeps the stock layout (status bar, chat bubbles, pairing text, emoji) and re-skins it to the
+// study palette. Replacing SetupUI caused two layouts to draw into the same 128x128 screen, which
+// is exactly the overlap we saw on the device. Extend, never replace.
 class AipiLiteDisplay : public SpiLcdDisplay {
 public:
     AipiLiteDisplay(esp_lcd_panel_io_handle_t panel_io, esp_lcd_panel_handle_t panel,
@@ -13,13 +14,6 @@ public:
     ~AipiLiteDisplay();
 
     void SetupUI() override;
-    void SetChatMessage(const char* role, const char* content) override;
-    void SetStatusWord(const char* word);
-
-private:
-    lv_obj_t* status_label_ = nullptr;
-    lv_obj_t* hint_label_ = nullptr;
-    lv_obj_t* said_label_ = nullptr;
 };
 
 #endif
