@@ -1292,10 +1292,12 @@ void Application::PollPendingNotification() {
     cJSON_Delete(root);
 
     ESP_LOGI(TAG, "Notify poll: received id=%s audio_url=%s", notify_id.c_str(), url.c_str());
-    Schedule([this, url, subtitles = std::move(subtitles), notify_id, ack]() mutable {
+    // StartNotification must run on the main task; the ack is network I/O and must
+    // NOT, or it would block audio and the UI for up to kNotifyHttpTimeoutMs.
+    Schedule([this, url, subtitles = std::move(subtitles)]() mutable {
         StartNotification(url, std::move(subtitles));
-        AckNotification(ack, notify_id, "delivered");
     });
+    AckNotification(ack, notify_id, "delivered");
 }
 
 void Application::StartNotification(std::string audio_url, std::vector<NotifySubtitle> subtitles) {
