@@ -23,5 +23,5 @@
 # threshold: 0.2
 # duration: 3000
 
-HEY ATLAS|Hey Atlas
-HEY POTATO|Hey Potato
+hey atlas|Hey Atlas
+hey potato|Hey Potato
