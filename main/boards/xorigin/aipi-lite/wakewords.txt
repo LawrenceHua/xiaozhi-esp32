@@ -25,3 +25,7 @@
 
 hey atlas|Hey Atlas
 hey potato|Hey Potato
+
+# Measured on this board: with the MultiNet detector running, the AFE reports no
+# WakeNet events, so the stock word is packaged and armed as a fallback for when
+# MultiNet cannot start - it is not a second live detector.

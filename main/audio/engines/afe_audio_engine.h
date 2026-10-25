@@ -81,9 +81,9 @@ private:
     // uses it to reject a fetch result produced before a disable/re-enable cycle.
     std::atomic<uint32_t> control_generation_{0};
     WakeDetector wake_detector_ = WakeDetector::kNone;
-    // A WakeNet model is packaged and armed. It is the detector itself for the
-    // stock configuration, and the always-available fallback wake word when a
-    // MultiNet (custom wake word) model is selected instead.
+    // A WakeNet model is packaged in srmodels.bin. It is the detector itself for
+    // the stock configuration, and the fallback when a MultiNet (custom wake
+    // word) model is selected but cannot be initialised.
     bool wakenet_active_ = false;
 
     std::unique_ptr<CustomWakeWord> custom_wake_word_;
