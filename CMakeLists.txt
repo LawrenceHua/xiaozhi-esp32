@@ -13,17 +13,19 @@ idf_build_set_property(MINIMAL_BUILD ON)
 # (that is what decides "newer"), then the git sha so two builds can never claim
 # the same version. Falls back to the bare base when git is unavailable.
 set(PROJECT_VER_BASE "2.5.4")
-execute_process(
-    COMMAND git rev-parse --short=7 HEAD
-    WORKING_DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR}
-    OUTPUT_VARIABLE GIT_SHA
-    OUTPUT_STRIP_TRAILING_WHITESPACE
-    ERROR_QUIET
-    RESULT_VARIABLE GIT_RC)
-if(GIT_RC EQUAL 0 AND GIT_SHA)
-    set(PROJECT_VER "${PROJECT_VER_BASE}-${GIT_SHA}")
+# The version must identify the build: <base>-<sha>. The sha comes from CI because
+# git is not usable inside the espressif/idf build container. Missing sha is a hard
+# error on purpose - an unversioned image in an OTA slot produces upgrades that
+# report success and change nothing.
+if(DEFINED ENV{GIT_SHA} AND NOT "$ENV{GIT_SHA}" STREQUAL "")
+    string(SUBSTRING "$ENV{GIT_SHA}" 0 7 GIT_SHA_SHORT)
+elseif(DEFINED ENV{GITHUB_SHA} AND NOT "$ENV{GITHUB_SHA}" STREQUAL "")
+    string(SUBSTRING "$ENV{GITHUB_SHA}" 0 7 GIT_SHA_SHORT)
 else()
-    set(PROJECT_VER "${PROJECT_VER_BASE}")
+    message(FATAL_ERROR
+        "GIT_SHA is not set. Refusing to build firmware with an ambiguous version. "
+        "Export GIT_SHA=<commit sha> (CI sets it from github.sha) and rebuild.")
 endif()
+set(PROJECT_VER "${PROJECT_VER_BASE}-${GIT_SHA_SHORT}")
 message(STATUS "xiaozhi firmware version: ${PROJECT_VER}")
 project(xiaozhi)

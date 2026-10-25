@@ -89,6 +89,7 @@ jobs:
           BOARD: ${{ matrix.board }}
           VARIANT: ${{ matrix.name }}
           BUILD_OPTIONS_JSON: ${{ toJSON(matrix.ci_build_options) }}
+          GIT_SHA: ${{ github.sha }}
         run: |
           source "$IDF_PATH/export.sh"
           OPTIONS=()
@@ -96,10 +97,23 @@ jobs:
             OPTIONS+=(--build-options-json "$BUILD_OPTIONS_JSON")
           fi
           python scripts/build.py "$BOARD" --name "$VARIANT" "${OPTIONS[@]}"
+          # Self-describing artifact for OTA publishing: version, size and sha256
+          # of the app-only image, so a truncated or mismatched file is detectable
+          # before the device ever tries it.
+          if [ -f build/xiaozhi.bin ]; then
+            APP_SHA=$(sha256sum build/xiaozhi.bin | cut -d' ' -f1)
+            APP_SIZE=$(stat -c %s build/xiaozhi.bin)
+            printf '{"variant":"%s","version":"%s","app_bin":"xiaozhi.bin","size":%s,"sha256":"%s","commit":"%s"}\n' \
+              "$VARIANT" "${GIT_SHA:0:7}" "$APP_SIZE" "$APP_SHA" "$GIT_SHA" > build/ota-manifest.json
+            cat build/ota-manifest.json
+          fi
 
       - name: Upload artifacts
         uses: actions/upload-artifact@v7
         with:
           name: xiaozhi_${{ matrix.ci_name || matrix.full_name }}_${{ github.sha }}
-          path: build/merged-binary.bin
+          path: |
+            build/merged-binary.bin
+            build/xiaozhi.bin
+            build/ota-manifest.json
           if-no-files-found: error

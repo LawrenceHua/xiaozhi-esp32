@@ -7,6 +7,8 @@
 // The app version is derived at build time in CMakeLists.txt as <base>-<git sha>
 // so every build is distinguishable and the OTA server can decide newer/older.
 // Do not hardcode a version here.
+// CI passes the commit sha as GIT_SHA; the configure step fails
+// rather than produce a build whose version cannot identify it.
 #include <driver/gpio.h>
 #include <driver/i2c_master.h>
 #include <driver/rtc_io.h>
