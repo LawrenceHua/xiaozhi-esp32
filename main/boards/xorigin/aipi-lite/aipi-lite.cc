@@ -1,3 +1,12 @@
+// AIPI Lite build notes
+// ---------------------
+// The OTA endpoint and the proactive-notification poll URL are baked per board
+// in config.json (sdkconfig_append): CONFIG_OTA_URL and CONFIG_NOTIFY_POLL_URL.
+// Both point at our own server, not api.tenclass.net.
+//
+// The app version is derived at build time in CMakeLists.txt as <base>-<git sha>
+// so every build is distinguishable and the OTA server can decide newer/older.
+// Do not hardcode a version here.
 #include <driver/gpio.h>
 #include <driver/i2c_master.h>
 #include <driver/rtc_io.h>
