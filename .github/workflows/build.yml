@@ -103,9 +103,8 @@ jobs:
           if [ -f build/xiaozhi.bin ]; then
             APP_SHA=$(sha256sum build/xiaozhi.bin | cut -d' ' -f1)
             APP_SIZE=$(stat -c %s build/xiaozhi.bin)
-            VER_NUM=$((16#${GIT_SHA:0:6}))
-            printf '{"variant":"%s","version":"2.5.4.%s","version_sha6":"%s","app_bin":"xiaozhi.bin","size":%s,"sha256":"%s","commit":"%s"}\n' \
-              "$VARIANT" "$VER_NUM" "${GIT_SHA:0:6}" "$APP_SIZE" "$APP_SHA" "$GIT_SHA" > build/ota-manifest.json
+            printf '{"variant":"%s","version":"2.5.5.%s","counter":"%s","version_sha6":"%s","app_bin":"xiaozhi.bin","size":%s,"sha256":"%s","commit":"%s"}\n' \
+              "$VARIANT" "$GITHUB_RUN_NUMBER" "$GITHUB_RUN_NUMBER" "${GIT_SHA:0:6}" "$APP_SIZE" "$APP_SHA" "$GIT_SHA" > build/ota-manifest.json
             cat build/ota-manifest.json
           fi
 
