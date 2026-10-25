@@ -7,6 +7,18 @@
 #define LCD_ACCENT  lv_color_hex(0x175E60)
 #define LCD_MUTED   lv_color_hex(0x5D686C)
 
+// The font must exist in this build; the Kconfig symbol is 0 or 1, so guard rather than assume.
+#if LV_FONT_MONTSERRAT_28
+#define FONT_STATUS &lv_font_montserrat_28
+#else
+#define FONT_STATUS &lv_font_montserrat_14
+#endif
+#if LV_FONT_MONTSERRAT_20
+#define FONT_MARK &lv_font_montserrat_20
+#else
+#define FONT_MARK &lv_font_montserrat_14
+#endif
+
 static const char* TAG = "AipiLiteDisplay";
 
 AipiLiteDisplay::AipiLiteDisplay(esp_lcd_panel_io_handle_t panel_io,
@@ -32,14 +44,14 @@ void AipiLiteDisplay::SetupUI() {
     lv_obj_t* mark = lv_label_create(screen);
     lv_label_set_text(mark, "AIPi");
     lv_obj_set_style_text_color(mark, LCD_ACCENT, 0);
-    lv_obj_set_style_text_font(mark, &lv_font_montserrat_14, 0);
+    lv_obj_set_style_text_font(mark, FONT_MARK, 0);
     lv_obj_align(mark, LV_ALIGN_TOP_MID, 0, 10);
 
     // one status word, the centre of the screen
     status_label_ = lv_label_create(screen);
     lv_label_set_text(status_label_, "Ready");
     lv_obj_set_style_text_color(status_label_, LCD_INK, 0);
-    lv_obj_set_style_text_font(status_label_, &lv_font_montserrat_28, 0);
+    lv_obj_set_style_text_font(status_label_, FONT_STATUS, 0);
     lv_obj_align(status_label_, LV_ALIGN_CENTER, 0, -8);
 
     // what she actually said, in one small line
