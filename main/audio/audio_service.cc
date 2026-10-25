@@ -480,53 +480,53 @@ void AudioService::OpusCodecTask() {
                 task.pcm.size() >= static_cast<size_t>(encoder_frame_size_)) {
                 for (size_t offset = 0; offset + encoder_frame_size_ <= task.pcm.size();
                      offset += encoder_frame_size_) {
-                auto packet = std::make_unique<AudioStreamPacket>();
-                packet->frame_duration = OPUS_FRAME_DURATION_MS;
-                packet->sample_rate = 16000;
-                packet->timestamp = task.timestamp;
-                packet->payload.resize(encoder_outbuf_size_);
-                esp_audio_enc_in_frame_t in = {
-                    .buffer = (uint8_t*)(task.pcm.data() + offset),
-                    .len = (uint32_t)(encoder_frame_size_ * sizeof(int16_t)),
-                };
-                esp_audio_enc_out_frame_t out = {
-                    .buffer = packet->payload.data(),
-                    .len = (uint32_t)encoder_outbuf_size_,
-                    .encoded_bytes = 0,
-                };
-                auto ret = esp_opus_enc_process(opus_encoder_, &in, &out);
-                if (ret == ESP_AUDIO_ERR_OK) {
-                    packet->payload.resize(out.encoded_bytes);
+                    auto packet = std::make_unique<AudioStreamPacket>();
+                    packet->frame_duration = OPUS_FRAME_DURATION_MS;
+                    packet->sample_rate = 16000;
+                    packet->timestamp = task.timestamp;
+                    packet->payload.resize(encoder_outbuf_size_);
+                    esp_audio_enc_in_frame_t in = {
+                        .buffer = (uint8_t*)(task.pcm.data() + offset),
+                        .len = (uint32_t)(encoder_frame_size_ * sizeof(int16_t)),
+                    };
+                    esp_audio_enc_out_frame_t out = {
+                        .buffer = packet->payload.data(),
+                        .len = (uint32_t)encoder_outbuf_size_,
+                        .encoded_bytes = 0,
+                    };
+                    auto ret = esp_opus_enc_process(opus_encoder_, &in, &out);
+                    if (ret == ESP_AUDIO_ERR_OK) {
+                        packet->payload.resize(out.encoded_bytes);
 
-                    if (task.type == kAudioTaskTypeEncodeToSendQueue ||
-                        task.type == kAudioTaskTypeEncodePreRollToSendQueue) {
-                        {
-                            std::lock_guard<std::mutex> lock2(audio_queue_mutex_);
-                            /* Never let a full send queue stall encoding: stale realtime
-                             * audio is useless to the server, so drop the oldest packet. */
-                            if (audio_send_queue_.size() >= MAX_SEND_PACKETS_IN_QUEUE) {
-                                audio_send_queue_.pop_front();
+                        if (task.type == kAudioTaskTypeEncodeToSendQueue ||
+                            task.type == kAudioTaskTypeEncodePreRollToSendQueue) {
+                            {
+                                std::lock_guard<std::mutex> lock2(audio_queue_mutex_);
+                                /* Never let a full send queue stall encoding: stale realtime
+                                 * audio is useless to the server, so drop the oldest packet. */
+                                if (audio_send_queue_.size() >= MAX_SEND_PACKETS_IN_QUEUE) {
+                                    audio_send_queue_.pop_front();
+                                }
+                                audio_send_queue_.push_back(std::move(packet));
                             }
-                            audio_send_queue_.push_back(std::move(packet));
+                            if (callbacks_.on_send_queue_available) {
+                                callbacks_.on_send_queue_available();
+                            }
+                        } else if (task.type == kAudioTaskTypeEncodeToTestingQueue) {
+                            bool testing_queue_full = false;
+                            {
+                                std::lock_guard<std::mutex> lock2(audio_queue_mutex_);
+                                testing_queue_full = !audio_testing_queue_.push_back(std::move(packet));
+                            }
+                            if (testing_queue_full && callbacks_.on_audio_testing_queue_full) {
+                                callbacks_.on_audio_testing_queue_full();
+                            }
                         }
-                        if (callbacks_.on_send_queue_available) {
-                            callbacks_.on_send_queue_available();
-                        }
-                    } else if (task.type == kAudioTaskTypeEncodeToTestingQueue) {
-                        bool testing_queue_full = false;
-                        {
-                            std::lock_guard<std::mutex> lock2(audio_queue_mutex_);
-                            testing_queue_full = !audio_testing_queue_.push_back(std::move(packet));
-                        }
-                        if (testing_queue_full && callbacks_.on_audio_testing_queue_full) {
-                            callbacks_.on_audio_testing_queue_full();
-                        }
+                        debug_statistics_.encode_count++;
+                    } else {
+                        ESP_LOGE(TAG, "Failed to encode audio, error code: %d", ret);
+                        break;
                     }
-                    debug_statistics_.encode_count++;
-                } else {
-                    ESP_LOGE(TAG, "Failed to encode audio, error code: %d", ret);
-                    break;
-                }
                 }
             } else {
                 ESP_LOGE(TAG,

@@ -958,7 +958,11 @@ void Application::HandleWakeWordDetectedEvent() {
 }
 
 void Application::BeginWakeWordInvoke(const std::string& wake_word) {
-    // Must run in the main task with the device in idle state
+    // Must run in the main task with the device in idle state.
+    // Start buffering first: detection has just stopped the capture pipeline and
+    // OpenAudioChannel below can block for ~1 s, so without this everything said
+    // straight after the wake word is never sampled at all.
+    audio_service_.StartPreRoll();
     audio_service_.EncodeWakeWord();
 
     // Always pass through the connecting state, even if the audio channel is
@@ -996,6 +1000,7 @@ void Application::ContinueWakeWordInvoke(const std::string& wake_word) {
             // Return to idle so the device is not stuck in the connecting
             // state (not every failure path reports a network error), and
             // wake word detection is re-enabled by the idle state handler.
+            audio_service_.CancelPreRoll();
             SetDeviceState(kDeviceStateIdle);
             return;
         }
@@ -1011,9 +1016,9 @@ void Application::ContinueWakeWordInvoke(const std::string& wake_word) {
     protocol_->SendWakeWordDetected(wake_word);
     SetListeningMode(GetDefaultListeningMode());
 #else
-    // Set flag to play popup sound after state changes to listening
-    // (PlaySound here would be cleared by ResetDecoder in EnableVoiceProcessing)
-    play_popup_on_listening_ = true;
+    // Deliberately silent on wake. A spoken or tonal acknowledgement occupies
+    // exactly the window in which the user is already talking, and its echo
+    // lands in the first ASR frames. The display/LED already show the transition.
     SetListeningMode(GetDefaultListeningMode());
 #endif
 }
@@ -1171,7 +1176,15 @@ void Application::StartListeningAudio() {
 
     // Send the start listening command
     protocol_->SendStartListening(listening_mode_);
-    audio_service_.EnableVoiceProcessing(true);
+    // Then hand over everything captured while the channel was opening, ahead of
+    // live audio, so ASR receives one continuous utterance instead of a fragment.
+    // A no-op on paths that never started a pre-roll (button, notification).
+    audio_service_.FlushPreRoll();
+    // The wake path re-armed processing when the pre-roll started; doing it again
+    // costs another 120 ms of warm-up and can drop the first live frames.
+    if (!audio_service_.IsAudioProcessorRunning()) {
+        audio_service_.EnableVoiceProcessing(true);
+    }
 
     ConfigureWakeWordForListening();
 

@@ -4,13 +4,21 @@
 // in config.json (sdkconfig_append): CONFIG_OTA_URL and CONFIG_NOTIFY_POLL_URL.
 // Both point at our own server, not api.tenclass.net.
 //
-// The app version is derived at build time in CMakeLists.txt as <base>-<git sha>
-// so every build is distinguishable and the OTA server can decide newer/older.
-// Do not hardcode a version here: it is 2.5.5.<monotonic counter>, because the
-// device discards non-numeric segments and a sha-derived segment is not ordered. It is 2.5.4.<int(sha,16)> because the
-// device's version parser only accepts numeric segments.
-// CI passes the commit sha as GIT_SHA; the configure step fails
-// rather than produce a build whose version cannot identify it.
+// The app version is derived at build time in CMakeLists.txt as
+// 2.5.5.<monotonic counter> so every build is distinguishable and the OTA server
+// can decide newer/older. Do not hardcode a version here. Every segment must be
+// numeric (the device discards "invalid version segment"), and the last one must
+// be monotonic: a sha-derived segment is unique per commit but not ordered, so a
+// descendant build could sort below the running firmware and be silently refused
+// as "already latest". CI passes GITHUB_RUN_NUMBER as that counter and the commit
+// sha as GIT_SHA; the configure step fails rather than produce a build whose
+// version cannot identify it.
+//
+// Wake latency: the wake phrase is detected on-device and the words that follow
+// it are captured into a pre-roll buffer while the server channel opens (~1 s),
+// then flushed ahead of live audio. Acknowledging the wake word with a sound
+// would occupy exactly the window the user is already speaking, so the wake
+// transition is silent on this board.
 #include <driver/gpio.h>
 #include <driver/i2c_master.h>
 #include <driver/rtc_io.h>
