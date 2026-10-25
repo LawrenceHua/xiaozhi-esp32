@@ -79,3 +79,5 @@ void AipiLiteDisplay::SetChatMessage(const char* role, const char* content) {
         lv_label_set_text(said_label_, "");
     }
 }
+
+// Layout follows AIPi interface study 01: one state, one button hint.
