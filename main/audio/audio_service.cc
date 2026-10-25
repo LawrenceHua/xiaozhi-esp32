@@ -1,4 +1,5 @@
 #include "audio_service.h"
+#include <esp_heap_caps.h>
 #include <esp_log.h>
 #include <cstring>
 
@@ -764,8 +765,9 @@ void AudioService::StartPreRoll() {
     if (!IsAudioProcessorRunning()) {
         EnableVoiceProcessing(true);
     }
-    ESP_LOGI(TAG, "pre-roll: capturing (max %u samples)",
-             (unsigned)kPreRollMaxSamples);
+    ESP_LOGI(TAG, "pre-roll: capturing (max %u samples), PSRAM free %u bytes",
+             (unsigned)kPreRollMaxSamples,
+             (unsigned)heap_caps_get_free_size(MALLOC_CAP_SPIRAM));
 }
 
 size_t AudioService::FlushPreRoll() {
@@ -795,8 +797,10 @@ size_t AudioService::FlushPreRoll() {
 
     const size_t bytes = read * sizeof(int16_t);
     const size_t ms = read * 1000 / 16000;
-    ESP_LOGI(TAG, "pre-roll: %u bytes (%u ms) queued ahead of live audio",
-             (unsigned)bytes, (unsigned)ms);
+    ESP_LOGI(TAG,
+             "pre-roll: %u bytes (%u ms of audio) queued ahead of live audio, "
+             "%lld ms after detection",
+             (unsigned)bytes, (unsigned)ms, (long long)(elapsed_us / 1000));
     PushTaskToEncodeQueue(kAudioTaskTypeEncodePreRollToSendQueue, std::move(pcm));
     return bytes;
 }
