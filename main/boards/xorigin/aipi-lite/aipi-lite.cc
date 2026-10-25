@@ -18,7 +18,10 @@
 // it are captured into a pre-roll buffer while the server channel opens (~1 s),
 // then flushed ahead of live audio. Acknowledging the wake word with a sound
 // would occupy exactly the window the user is already speaking, so the wake
-// transition is silent on this board.
+// transition is silent on this board. The pre-roll exists only where the AFE
+// engine does (S3/P4/S31); elsewhere AudioService's pre-roll methods are no-ops
+// and the build is unchanged, so a board without a wake-word path can never fail
+// to wake because a 64 KB buffer was unavailable.
 #include <driver/gpio.h>
 #include <driver/i2c_master.h>
 #include <driver/rtc_io.h>

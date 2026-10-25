@@ -86,11 +86,13 @@ void AudioService::Initialize(AudioCodec* codec) {
     audio_engine_ = std::make_unique<LiteAudioEngine>();
 #endif
     audio_engine_->OnOutput([this](std::vector<int16_t>&& data) {
+#ifdef AUDIO_SERVICE_HAS_PRE_ROLL
         if (pre_roll_active_.load()) {
             // The channel is not open yet: hold the audio instead of dropping it.
             pre_roll_cache_.Store(data.data(), data.size());
             return;
         }
+#endif
         PushTaskToEncodeQueue(kAudioTaskTypeEncodeToSendQueue, std::move(data));
     });
     audio_engine_->OnVadStateChange([this](bool speaking) {
@@ -750,6 +752,7 @@ void AudioService::EnableVoiceProcessing(bool enable) {
     }
 }
 
+#ifdef AUDIO_SERVICE_HAS_PRE_ROLL
 void AudioService::StartPreRoll() {
     if (!pre_roll_cache_.Initialize(kPreRollMaxSamples)) {
         ESP_LOGW(TAG, "pre-roll: no PSRAM buffer, post-wake speech may be clipped");
@@ -812,6 +815,12 @@ void AudioService::CancelPreRoll() {
     }
     pre_roll_cache_.Clear();
 }
+
+#else  // no AFE wake-word path on this target: the pre-roll is not available
+void AudioService::StartPreRoll() {}
+size_t AudioService::FlushPreRoll() { return 0; }
+void AudioService::CancelPreRoll() {}
+#endif
 
 void AudioService::EnableAudioTesting(bool enable) {
     ESP_LOGI(TAG, "%s audio testing", enable ? "Enabling" : "Disabling");

@@ -23,7 +23,15 @@
 #include "audio_engine.h"
 #include "fixed_queue.h"
 #include "ogg_demuxer.h"
+// The wake pre-roll reuses the wake-word audio cache, which is only compiled for
+// the chips that run the AFE engine (see main/CMakeLists.txt). On every other
+// target there is no wake-word path to feed, so the pre-roll compiles out and the
+// public methods below become no-ops - a device must never fail to wake because a
+// buffer could not be allocated.
+#if CONFIG_IDF_TARGET_ESP32S3 || CONFIG_IDF_TARGET_ESP32P4 || CONFIG_IDF_TARGET_ESP32S31
 #include "wake_words/wake_word_audio_cache.h"
+#define AUDIO_SERVICE_HAS_PRE_ROLL 1
+#endif
 #include "protocol.h"
 
 /*
@@ -206,6 +214,7 @@ private:
     FixedQueue<AudioTask, MAX_ENCODE_TASKS_IN_QUEUE> audio_encode_queue_;
     FixedQueue<AudioTask, MAX_PLAYBACK_TASKS_IN_QUEUE> audio_playback_queue_;
     // 2.0 s of 16 kHz mono PCM = 64,000 bytes, allocated from PSRAM on first use.
+#ifdef AUDIO_SERVICE_HAS_PRE_ROLL
     static constexpr size_t kPreRollMaxSamples = 32000;
     // A buffer older than this describes a moment that has already passed; send
     // it and ASR would attribute stale speech to the current turn.
@@ -213,6 +222,7 @@ private:
     WakeWordAudioCache pre_roll_cache_;
     std::atomic<bool> pre_roll_active_{false};
     int64_t pre_roll_start_us_ = 0;
+#endif
 
     bool decode_in_flight_ = false;
     bool output_in_flight_ = false;
