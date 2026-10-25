@@ -15,7 +15,6 @@ config NOTIFY_POLL_URL
         the whole feature (default).
 
 config NOTIFY_POLL_INTERVAL_SEC
-    depends on NOTIFY_POLL_URL != ""
     int "Proactive notification poll interval (seconds)"
     default 30
     range 5 3600
