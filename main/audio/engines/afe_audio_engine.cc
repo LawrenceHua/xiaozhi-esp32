@@ -80,10 +80,9 @@ bool AfeAudioEngine::Initialize(AudioCodec* codec, int frame_duration_ms,
         }
     }
 
-    // WakeNet models are collected for both detector choices: they are the
-    // detector for the stock configuration, and the fallback when the MultiNet
-    // detector cannot be initialised (the AFE reports no WakeNet events while
-    // MultiNet is the detector, so the two never run at the same time).
+    // WakeNet models are collected for both detector choices. When the MultiNet
+    // detector is selected, WakeNet stays armed inside the AFE so the stock wake
+    // word keeps working and remains available if MultiNet fails to initialise.
     std::vector<char*> wakenet_models;
     if (models_ != nullptr) {
         for (int i = 0; i < models_->num; ++i) {
@@ -158,10 +157,10 @@ bool AfeAudioEngine::Initialize(AudioCodec* codec, int frame_duration_ms,
     if (vad_model_name != nullptr) {
         afe_config->vad_model_name = vad_model_name;
     }
-    afe_config->wakenet_init = wake_detector_ == WakeDetector::kWakeNet;
+    afe_config->wakenet_init = wakenet_active_;
     afe_config->wakenet_model_name = nullptr;
     afe_config->wakenet_model_name_2 = nullptr;
-    if (wake_detector_ == WakeDetector::kWakeNet && wakenet_active_) {
+    if (wakenet_active_) {
         afe_config->wakenet_model_name = wakenet_models[0];
         if (wakenet_models.size() > 1) {
             afe_config->wakenet_model_name_2 = wakenet_models[1];
@@ -210,7 +209,7 @@ bool AfeAudioEngine::Initialize(AudioCodec* codec, int frame_duration_ms,
         return false;
     }
 
-    if (wake_detector_ == WakeDetector::kWakeNet) {
+    if (wakenet_active_) {
         afe_iface_->disable_wakenet(afe_data_);
     }
     if (codec_->input_reference()) {
@@ -327,7 +326,14 @@ void AfeAudioEngine::EnableDeviceAec(bool enable) {
 bool AfeAudioEngine::HasWakeWord() const { return wake_detector_ != WakeDetector::kNone; }
 
 std::vector<std::string> AfeAudioEngine::GetWakeWords() const {
-    return custom_wake_word_ ? custom_wake_word_->GetWakeWords() : wake_words_;
+    if (!custom_wake_word_) {
+        return wake_words_;
+    }
+    auto words = custom_wake_word_->GetWakeWords();
+    // The stock WakeNet words are still armed, so list them too: the startup
+    // hint must not hide a word that can actually wake the device.
+    words.insert(words.end(), wake_words_.begin(), wake_words_.end());
+    return words;
 }
 
 bool AfeAudioEngine::IsWakeWordDetectionEnabled() const {
@@ -393,7 +399,7 @@ void AfeAudioEngine::UpdateAecState() {
 
 void AfeAudioEngine::ApplyAfeControls() {
     EventBits_t bits = xEventGroupGetBits(event_group_);
-    if (wake_detector_ == WakeDetector::kWakeNet) {
+    if (wakenet_active_) {
         if (bits & kWakeWordEnabled) {
             afe_iface_->enable_wakenet(afe_data_);
         } else {
@@ -462,6 +468,18 @@ void AfeAudioEngine::ProcessingTask() {
 
 void AfeAudioEngine::HandleWakeWordResult(const afe_fetch_result_t* result) {
     if (wake_detector_ == WakeDetector::kMultiNet) {
+        // The stock WakeNet model is still armed inside the AFE while the
+        // MultiNet wake words run, so the stock word keeps waking the device.
+        if (wakenet_active_ && result->wakeup_state == WAKENET_DETECTED) {
+            int model_index = result->wakenet_model_index - 1;
+            if (model_index >= 0 && model_index < static_cast<int>(wake_words_.size())) {
+                ESP_LOGI(TAG, "Stock WakeNet wake word detected: %s",
+                         wake_words_[model_index].c_str());
+                ReportWakeWordDetected(wake_words_[model_index]);
+                return;
+            }
+            ESP_LOGE(TAG, "Invalid WakeNet model index: %d", result->wakenet_model_index);
+        }
         custom_wake_word_->FeedMono(result->data, result->data_size / sizeof(int16_t));
         return;
     }
